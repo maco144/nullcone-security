@@ -1,0 +1,22 @@
+{
+  "name": "nullcone",
+  "owner": {
+    "name": "Nullcone",
+    "email": "hi@nullcone.ai"
+  },
+  "metadata": {
+    "description": "Free security layer for AI coding agents. Automatically blocks malicious IPs, domains, prompt injections, and AI skill attacks."
+  },
+  "plugins": [
+    {
+      "name": "nullcone",
+      "source": "./plugin",
+      "description": "Automatic threat intelligence protection for Claude Code. Checks every command against 658K+ IOCs.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Nullcone",
+        "email": "hi@nullcone.ai"
+      }
+    }
+  ]
+}

@@ -5,7 +5,16 @@
 No signup. No API key. No config.
 
 ```bash
-claude plugin install nullcone
+# Add the Nullcone marketplace (one time)
+/plugin marketplace add maco144/nullcone-security
+
+# Install the plugin
+/plugin install nullcone@nullcone
+```
+
+Or test locally:
+```bash
+claude --plugin-dir ./plugin
 ```
 
 ## What happens when you install
