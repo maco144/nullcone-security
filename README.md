@@ -1,4 +1,4 @@
-# Nullcone — Your AI agent's immune system
+# [Nullcone](https://nullcone.ai) — Your AI agent's immune system
 
 **Free security layer for Claude Code.** Install one plugin — every command, URL, and file write is automatically checked against 658K+ threat signatures. Malicious IPs, prompt injections, AI skill attacks — blocked before they execute.
 
