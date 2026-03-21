@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "nullcone": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.py"],
+      "env": {
+        "NULLCONE_API_URL": "https://nullcone.ai/api",
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
