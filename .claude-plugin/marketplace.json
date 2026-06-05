@@ -11,7 +11,7 @@
     {
       "name": "nullcone",
       "source": "./plugin",
-      "description": "Automatic threat intelligence protection for Claude Code. Checks every command against 658K+ IOCs.",
+      "description": "Automatic threat intelligence protection for Claude Code. Checks every command against 890K+ IOCs.",
       "version": "0.1.0",
       "author": {
         "name": "Nullcone",

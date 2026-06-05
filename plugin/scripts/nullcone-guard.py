@@ -3,7 +3,7 @@
 Nullcone Security Guard — Claude Code plugin hook.
 
 Automatically checks URLs, IPs, domains, and hashes found in tool inputs
-against the Nullcone threat intelligence database (648K+ IOCs). Blocks
+against the Nullcone threat intelligence database (890K+ IOCs). Blocks
 known-malicious indicators before Claude executes them.
 
 Architecture:

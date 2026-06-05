@@ -60,7 +60,7 @@ def _api_post(path: str, body: dict) -> dict:
 mcp = FastMCP(
     "Nullcone Threat Intelligence",
     instructions=(
-        "Threat intelligence tools backed by 658K+ IOCs. "
+        "Threat intelligence tools backed by 890K+ IOCs. "
         "Check indicators with lookup_ioc(), get current threats with recent_threats(), "
         "submit new IOCs with submit_ioc(). Covers IPs, domains, URLs, hashes, CVEs, "
         "prompt injection payloads, and malicious AI skill definitions.\n\n"

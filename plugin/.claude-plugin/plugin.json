@@ -1,6 +1,6 @@
 {
   "name": "nullcone",
-  "description": "Automatic threat intelligence protection for Claude Code. Checks every URL, IP, domain, and hash against 648K+ IOCs before execution. Blocks known-malicious indicators, scans for prompt injection, and provides real-time threat intel tools.",
+  "description": "Automatic threat intelligence protection for Claude Code. Checks every URL, IP, domain, and hash against 890K+ IOCs before execution. Blocks known-malicious indicators, scans for prompt injection, and provides real-time threat intel tools.",
   "version": "0.1.0",
   "author": {
     "name": "Nullcone",
@@ -8,8 +8,8 @@
     "url": "https://nullcone.ai"
   },
   "homepage": "https://nullcone.ai",
-  "repository": "https://github.com/nullcone-security/claude-code-plugin",
-  "license": "MIT",
+  "repository": "https://github.com/maco144/nullcone-security",
+  "license": "Rising-Sun-1.0",
   "keywords": [
     "security",
     "threat-intelligence",
