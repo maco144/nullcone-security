@@ -194,6 +194,125 @@ def _check_all(indicators: dict[str, set[str]]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Positional analysis — does the command REACH the indicator, or just mention it?
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS: `grep '<ioc>' backup.jsonl` contacts nothing. It reads a local file
+# that happens to contain the indicator. Blocking it does not make anyone safer; it stops
+# incident response, threat-hunting, and backup verification — the exact work this database
+# exists to support. On 2026-08-22 it blocked a backup-integrity check mid-investigation,
+# the second false block to cost real work.
+#
+# handle_write_edit already drew this line correctly (it WARNS when an IOC appears in file
+# content rather than blocking). This applies the same rule to Bash: block when the command
+# would REACH the indicator, warn when it merely names it.
+#
+# Fail-closed: an unrecognised command word counts as reaching. The allowlist below is
+# read/inspect tooling only — nothing that opens a socket, and no interpreter, ever.
+
+_INERT_COMMANDS = frozenset({
+    # read / search
+    "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "ag", "ack",
+    "zgrep", "zcat", "strings", "nl",
+    # transform / inspect (local only)
+    "awk", "gawk", "mawk", "sed", "cut", "tr", "sort", "uniq", "wc", "comm", "diff", "cmp",
+    "jq", "yq", "column", "echo", "printf", "rev", "paste", "join", "fold", "expand",
+    "base64", "xxd", "od", "hexdump",
+    # filesystem metadata
+    "ls", "stat", "file", "find", "basename", "dirname", "du", "df", "readlink", "realpath",
+    # digests
+    "md5sum", "sha1sum", "sha256sum", "sha512sum", "cksum",
+    # local archives
+    "tar", "gzip", "gunzip", "unzip",
+})
+
+# Transparent prefixes — skip them and keep looking for the real command word.
+_WRAPPER_COMMANDS = frozenset({
+    "sudo", "doas", "env", "nohup", "timeout", "nice", "ionice", "stdbuf", "command", "time",
+    "builtin", "exec", "then", "do", "else",
+})
+
+# Commands whose payload is a nested command: the indicator may be the destination
+# (reaching) or merely appear inside the remote command (analyse recursively).
+_REMOTE_WRAPPERS = frozenset({"ssh", "rsh"})
+
+# Split on shell operators. Deliberately NOT on bare parentheses — `jq 'select(.x=="v")'`
+# would shatter into fragments with meaningless command words and fail closed on a read.
+_SEGMENT_RE = re.compile(r"\|\||&&|\$\(|[|;&\n`]")
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# Wrappers consume arguments: `timeout 120 ssh …`, `nice -n 10 grep …`. Without this the
+# duration becomes the "command word", falls through to unknown, and fails closed on a read.
+# That is exactly how `timeout 120 ssh rising "grep <ioc> …"` still blocked after the first fix.
+_BARE_ARG_RE = re.compile(r"^\d+(\.\d+)?[smhd]?$")
+_QUOTES = "\"'`"
+_MAX_DEPTH = 3
+
+
+def _tokens(segment: str) -> list[str]:
+    return [t for t in (raw.strip(_QUOTES) for raw in segment.split()) if t]
+
+
+def _head_index(tokens: list[str]) -> int:
+    """Index of the real command word, skipping env assignments, wrappers, stray flags and
+    the bare arguments those wrappers consume."""
+    for i, tok in enumerate(tokens):
+        if (_ENV_ASSIGN_RE.match(tok) or tok in _WRAPPER_COMMANDS
+                or tok.startswith("-") or _BARE_ARG_RE.match(tok)):
+            continue
+        return i
+    return -1
+
+
+def _present(values, text: str) -> set:
+    low = text.lower()
+    return {v for v in values if v.lower() in low}
+
+
+def _reaching_values(command: str, values, _depth: int = 0) -> set:
+    """Subset of `values` sitting where the command would actually reach them."""
+    values = set(values)
+    if not values:
+        return set()
+    if _depth > _MAX_DEPTH:
+        return _present(values, command)          # too deep to reason about — fail closed
+
+    reaching = set()
+    for segment in _SEGMENT_RE.split(command):
+        present = _present(values, segment)
+        if not present:
+            continue
+
+        tokens = _tokens(segment)
+        idx = _head_index(tokens)
+        if idx < 0:
+            reaching |= present                   # no command word — fail closed
+            continue
+
+        head = os.path.basename(tokens[idx]).lower()
+
+        if head in _REMOTE_WRAPPERS:
+            # First non-flag argument is the destination; anything after it is a nested
+            # command. `ssh root@<ioc> id` reaches; `ssh host "grep <ioc> f"` does not.
+            rest = tokens[idx + 1:]
+            j = 0
+            while j < len(rest) and rest[j].startswith("-"):
+                j += 1
+            if j < len(rest):
+                reaching |= _present(present, rest[j])
+                remainder = " ".join(rest[j + 1:])
+                if remainder:
+                    reaching |= _reaching_values(remainder, present, _depth + 1)
+            else:
+                reaching |= present
+            continue
+
+        if head not in _INERT_COMMANDS:
+            reaching |= present
+
+    return reaching
+
+
+# ---------------------------------------------------------------------------
 # Hook handlers
 # ---------------------------------------------------------------------------
 
@@ -205,8 +324,16 @@ def handle_bash(tool_input: dict) -> None:
     if not any(indicators.values()):
         return
     hits = _check_all(indicators)
-    if hits:
-        _block(hits, "bash command")
+    if not hits:
+        return
+
+    # Block only what the command would actually reach. Everything else is a mention —
+    # reading a log, grepping a corpus export, hashing a sample — and gets a warning.
+    reaching = _reaching_values(command, {h["value"] for h in hits})
+    blocked = [h for h in hits if h["value"] in reaching]
+    if blocked:
+        _block(blocked, "bash command")
+    _warn_mentions([h for h in hits if h["value"] not in reaching])
 
 
 def handle_webfetch(tool_input: dict) -> None:
@@ -274,6 +401,23 @@ def handle_prompt_submit(data: dict) -> None:
             parts.append(f"  {h['value']} — severity {h['severity']}/10, family: {h['family']}, tags: {h['tags']}")
         parts.append("Use this context when responding.")
         print(json.dumps({"additionalContext": "\n".join(parts)}))
+
+
+def _warn_mentions(hits: list[dict]) -> None:
+    """Known-malicious values named by a command that does not reach them. Allowed, noted."""
+    if not hits:
+        return
+    lines = ["NULLCONE NOTE: known-malicious indicator(s) named by this command:"]
+    for h in hits:
+        lines.append(
+            f"  {h['value']} — {h['ioc_type']}, severity {h['severity']}/10, "
+            f"family {h['family']}"
+        )
+    lines.append(
+        "Allowed: the command reads or inspects locally, it does not contact them. "
+        "Verify that is what you intended."
+    )
+    print("\n".join(lines), file=sys.stderr)
 
 
 def _block(hits: list[dict], context: str) -> None:
