@@ -12,7 +12,7 @@
       "name": "nullcone",
       "source": "./plugin",
       "description": "Automatic threat intelligence protection for Claude Code. Checks every command against 890K+ IOCs.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "Nullcone",
         "email": "hi@nullcone.ai"
