@@ -3,7 +3,7 @@
 Nullcone Security Guard — Claude Code plugin hook.
 
 Automatically checks URLs, IPs, domains, and hashes found in tool inputs
-against the Nullcone threat intelligence database (890K+ IOCs). Blocks
+against the Nullcone threat intelligence database (1.37M+ IOCs). Blocks
 known-malicious indicators before Claude executes them.
 
 Architecture:
@@ -37,6 +37,18 @@ _API_URL = os.getenv("NULLCONE_API_URL", "https://nullcone.ai/api")
 # Severity threshold — only block on IOCs at or above this severity
 _MIN_BLOCK_SEVERITY = int(os.getenv("NULLCONE_MIN_SEVERITY", "5"))
 
+# Confidence tiers that may BLOCK. An "unverified" hit is still reported, as a note.
+#
+# WHY: until 0.1.2 the guard blocked on severity alone. Feed noise then stopped real work:
+# urlscan scans tagged "malicious" by their own submitters listed a documentation domain
+# and a major chat platform at severity 7, and the guard blocked commands that reached
+# them — while the API already scored both "unverified" (0.47-0.48). A downstream scanner
+# (agent-kit) filtering on that tier was more precise than Nullcone's own guard.
+_BLOCK_TIERS = frozenset(
+    t.strip() for t in os.getenv("NULLCONE_BLOCK_TIERS", "community,validated,enterprise").split(",")
+    if t.strip()
+)
+
 # ---------------------------------------------------------------------------
 # Nullcone REST API client (zero dependencies — stdlib only)
 # ---------------------------------------------------------------------------
@@ -67,10 +79,15 @@ def _lookup(value: str) -> Optional[dict]:
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
 
+    tier = row.get("confidence_tier")
     return {
         "value": row.get("value", value),
         "severity": severity,
         "confidence": row.get("confidence", 0),
+        "confidence_score": row.get("confidence_score"),
+        "confidence_tier": tier or "unknown",
+        # An API too old to send a tier keeps the pre-0.1.2 behaviour (block).
+        "blockable": tier is None or tier in _BLOCK_TIERS,
         "family": row.get("family_name", "unknown"),
         "ioc_type": row.get("ioc_type", "unknown"),
         "tags": tags,
@@ -85,7 +102,17 @@ _INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|context)", re.I),
     re.compile(r"disregard\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)", re.I),
     re.compile(r"forget\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)", re.I),
-    re.compile(r"you\s+are\s+now\s+(a|an|the)\s+\w+", re.I),
+    # Role hijack, not role change. The old `you are now (a|an|the) \w+` blocked writing
+    # onboarding copy ("...now a verified member", "...now the owner", "...now an admin").
+    re.compile(
+        r"you\s+are\s+now\s+(?:in\s+)?(?:"
+        r"DAN\b|developer\s+mode|god\s+mode|jailbr(?:oken|eak)"
+        r"|(?:an?\s+)?(?:unrestricted|unfiltered|uncensored|unaligned|evil|rogue)\b"
+        r"|free\s+(?:of|from)\s+(?:all\s+)?(?:restrictions|rules|guidelines|filters)"
+        r"|no\s+longer\s+(?:bound|restricted|limited|an?\s+(?:ai|assistant|language\s+model))"
+        r")",
+        re.I,
+    ),
     re.compile(r"new\s+(system\s+)?instructions?:\s*", re.I),
     re.compile(r"override\s+(system|safety|security)\s+(prompt|instructions?|rules?|filters?)", re.I),
     re.compile(r"act\s+as\s+if\s+(you\s+)?(have\s+)?(no|zero)\s+(restrictions?|limitations?|rules?)", re.I),
@@ -330,9 +357,10 @@ def handle_bash(tool_input: dict) -> None:
     # Block only what the command would actually reach. Everything else is a mention —
     # reading a log, grepping a corpus export, hashing a sample — and gets a warning.
     reaching = _reaching_values(command, {h["value"] for h in hits})
-    blocked = [h for h in hits if h["value"] in reaching]
+    blocked = [h for h in hits if h["value"] in reaching and h["blockable"]]
     if blocked:
         _block(blocked, "bash command")
+    _warn_unverified([h for h in hits if h["value"] in reaching and not h["blockable"]])
     _warn_mentions([h for h in hits if h["value"] not in reaching])
 
 
@@ -342,8 +370,10 @@ def handle_webfetch(tool_input: dict) -> None:
         return
     indicators = _extract_indicators(url)
     hits = _check_all(indicators)
-    if hits:
-        _block(hits, "web fetch target")
+    blocked = [h for h in hits if h["blockable"]]
+    if blocked:
+        _block(blocked, "web fetch target")
+    _warn_unverified([h for h in hits if not h["blockable"]])
 
 
 def handle_write_edit(tool_input: dict) -> None:
@@ -368,7 +398,8 @@ def handle_write_edit(tool_input: dict) -> None:
     if hits:
         lines = ["NULLCONE WARNING: Known-malicious indicators in content being written:"]
         for h in hits:
-            lines.append(f"  - {h['value']} (severity={h['severity']}, family={h['family']})")
+            lines.append(f"  - {h['value']} (severity={h['severity']}, family={h['family']}, "
+                         f"confidence={h['confidence_tier']})")
         lines.append("Proceeding — verify this is intentional (IOC docs, not live config).")
         print("\n".join(lines), file=sys.stderr)
 
@@ -398,7 +429,8 @@ def handle_prompt_submit(data: dict) -> None:
     if hits:
         parts = ["[NULLCONE INTEL] Indicators in this prompt matched the threat database:"]
         for h in hits:
-            parts.append(f"  {h['value']} — severity {h['severity']}/10, family: {h['family']}, tags: {h['tags']}")
+            parts.append(f"  {h['value']} — severity {h['severity']}/10, family: {h['family']}, "
+                         f"confidence: {h['confidence_tier']}, tags: {h['tags']}")
         parts.append("Use this context when responding.")
         print(json.dumps({"additionalContext": "\n".join(parts)}))
 
@@ -420,6 +452,23 @@ def _warn_mentions(hits: list[dict]) -> None:
     print("\n".join(lines), file=sys.stderr)
 
 
+def _warn_unverified(hits: list[dict]) -> None:
+    """Reached, but only an unverified source lists it. Allowed, noted — never silent."""
+    if not hits:
+        return
+    lines = ["NULLCONE NOTE: this command reaches indicator(s) listed only by unverified sources:"]
+    for h in hits:
+        lines.append(
+            f"  {h['value']} — {h['ioc_type']}, severity {h['severity']}/10, "
+            f"confidence {h['confidence_score']} ({h['confidence_tier']}), tags {', '.join(h['tags']) or 'none'}"
+        )
+    lines.append(
+        "Allowed: unverified listings are too noisy to block on. "
+        "Set NULLCONE_BLOCK_TIERS=unverified,community,validated,enterprise to block them too."
+    )
+    print("\n".join(lines), file=sys.stderr)
+
+
 def _block(hits: list[dict], context: str) -> None:
     sev_labels = {10: "CRITICAL", 9: "CRITICAL", 8: "HIGH", 7: "HIGH",
                   6: "MEDIUM", 5: "MEDIUM"}
@@ -429,7 +478,7 @@ def _block(hits: list[dict], context: str) -> None:
         lines.append(
             f"  [{label}] {h['value']}\n"
             f"    Type: {h['ioc_type']} | Family: {h['family']}\n"
-            f"    Severity: {h['severity']}/10 | Confidence: {h['confidence']}%\n"
+            f"    Severity: {h['severity']}/10 | Confidence: {h['confidence_score']} ({h['confidence_tier']})\n"
             f"    Tags: {', '.join(h['tags']) if h['tags'] else 'none'}"
         )
     lines.append(

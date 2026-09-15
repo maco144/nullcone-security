@@ -60,7 +60,7 @@ def _api_post(path: str, body: dict) -> dict:
 mcp = FastMCP(
     "Nullcone Threat Intelligence",
     instructions=(
-        "Threat intelligence tools backed by 890K+ IOCs. "
+        "Threat intelligence tools backed by 1.37M+ IOCs. "
         "Check indicators with lookup_ioc(), get current threats with recent_threats(), "
         "submit new IOCs with submit_ioc(). Covers IPs, domains, URLs, hashes, CVEs, "
         "prompt injection payloads, and malicious AI skill definitions.\n\n"
@@ -190,10 +190,11 @@ def poll_since(last_id: int = 0, batch_size: int = 1000, min_severity: int = 0) 
         batch_size:   Max results (1-5000)
         min_severity: Skip below this severity (0-10)
     """
+    # Was /v1/threats?last_id=&limit= : that endpoint ignores last_id (so this returned
+    # recent threats, not a delta) and rejects limit > 500 (so the default 1000 was a 422).
     try:
-        return _api_get("/v1/threats", {
-            "last_id": last_id,
-            "limit": max(1, min(batch_size, 5000)),
+        return _api_get(f"/v1/threats/since/{max(0, int(last_id))}", {
+            "batch_size": max(1, min(batch_size, 5000)),
             "min_severity": min_severity,
         })
     except Exception as e:

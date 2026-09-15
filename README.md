@@ -1,6 +1,6 @@
 # [Nullcone](https://nullcone.ai) — Your AI agent's immune system
 
-**Free security layer for Claude Code.** Install one plugin — every command, URL, and file write is automatically checked against 890K+ threat signatures. Malicious IPs, prompt injections, AI skill attacks — blocked before they execute.
+**Free security layer for Claude Code.** Install one plugin — every command, URL, and file write is automatically checked against 1.37M+ threat signatures. Malicious IPs, prompt injections, AI skill attacks — blocked before they execute.
 
 No signup. No API key. No config.
 
@@ -55,7 +55,7 @@ That's a real C2 server from the ClawHavoc campaign — 341 malicious AI skills 
 - Every user prompt enriched with threat context when IOCs are mentioned
 
 **On-demand (MCP tools):**
-- `lookup_ioc` — check any indicator against 890K+ signatures
+- `lookup_ioc` — check any indicator against 1.37M+ signatures
 - `recent_threats` — current high-severity activity
 - `submit_ioc` — report new threats to the network
 - `search_by_type` — pull all known-bad IPs, domains, skills, etc.
@@ -82,7 +82,7 @@ That's a real C2 server from the ClawHavoc campaign — 341 malicious AI skills 
 │                           │                  │
 │                  ┌────────▼─────────┐       │
 │                  │ nullcone.ai API  │       │
-│                  │ 890K+ IOCs       │       │
+│                  │ 1.37M+ IOCs       │       │
 │                  │ Free, no auth    │       │
 │                  └──────────────────┘       │
 └─────────────────────────────────────────────┘

@@ -1,7 +1,7 @@
 {
   "name": "nullcone",
-  "description": "Automatic threat intelligence protection for Claude Code. Checks every URL, IP, domain, and hash against 890K+ IOCs before execution. Blocks known-malicious indicators, scans for prompt injection, and provides real-time threat intel tools.",
-  "version": "0.1.1",
+  "description": "Automatic threat intelligence protection for Claude Code. Checks every URL, IP, domain, and hash against 1.37M+ IOCs before execution. Blocks known-malicious indicators, scans for prompt injection, and provides real-time threat intel tools.",
+  "version": "0.1.2",
   "author": {
     "name": "Nullcone",
     "email": "hi@nullcone.ai",
