@@ -343,7 +343,7 @@ def _reaching_values(command: str, values, _depth: int = 0) -> set:
 # Hook handlers
 # ---------------------------------------------------------------------------
 
-def handle_bash(tool_input: dict) -> None:
+def handle_bash(tool_input: dict, context: str = "bash command") -> None:
     command = tool_input.get("command", "")
     if not command:
         return
@@ -359,7 +359,7 @@ def handle_bash(tool_input: dict) -> None:
     reaching = _reaching_values(command, {h["value"] for h in hits})
     blocked = [h for h in hits if h["value"] in reaching and h["blockable"]]
     if blocked:
-        _block(blocked, "bash command")
+        _block(blocked, context)
     _warn_unverified([h for h in hits if h["value"] in reaching and not h["blockable"]])
     _warn_mentions([h for h in hits if h["value"] not in reaching])
 
@@ -511,11 +511,23 @@ def main():
                 handle_webfetch(tool_input)
             elif tool_name in ("Write", "Edit"):
                 handle_write_edit(tool_input)
+        elif event == "PreSkillShellCommand":
+            # A skill's / slash command's load-time shell lines (!`cmd`, ```! blocks) run
+            # BEFORE the model sees the skill and never pass through PreToolUse. Until 0.1.3
+            # a skill could `curl` a live IOC at load with no check at all.
+            if tool_name in ("Bash", ""):
+                name = data.get("command_name") or "unknown"
+                handle_bash(tool_input, f"skill load-time shell line (skill: {name})")
         elif event == "UserPromptSubmit":
             handle_prompt_submit(data)
-    except Exception:
-        # Fail-open: never block due to internal errors
-        pass
+    except Exception as e:
+        if event == "PreSkillShellCommand":
+            # Fail closed here: nobody is watching a load-time line, and the skill still
+            # loads with "[not run: ...]" in its place, so a block costs one line, not the skill.
+            print(f"NULLCONE BLOCK: guard error on a skill load-time shell line "
+                  f"({type(e).__name__}); not run.", file=sys.stderr)
+            sys.exit(2)
+        # Everywhere else, fail open: never block interactive work due to internal errors
 
     sys.exit(0)
 

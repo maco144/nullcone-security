@@ -24,6 +24,7 @@ Every Claude Code session is now protected:
 | Hook | What it does | Latency |
 |---|---|---|
 | **Bash commands** | Extracts IPs, domains, URLs, hashes — blocks known threats | 0ms clean, ~400ms lookup |
+| **Skill load-time shell** | Same check on a skill's `!`-lines, which run before the model sees the skill and skip every PreToolUse hook (Claude Code 2.1.332+) | 0ms clean, ~400ms lookup |
 | **WebFetch** | Checks every URL before fetching | ~400ms |
 | **File writes** | Scans for prompt injection patterns + malicious IOCs | 0ms pattern, ~400ms IOC |
 | **Your prompts** | Detects injection attempts, enriches with threat context | 0ms–400ms |
@@ -117,7 +118,7 @@ Every developer who installs this plugin is a sensor. Every blocked threat is si
 ```
 .claude-plugin/plugin.json    — manifest
 .mcp.json                     — MCP server config (auto-starts)
-hooks/hooks.json              — PreToolUse + UserPromptSubmit hooks
+hooks/hooks.json              — PreToolUse + PreSkillShellCommand + UserPromptSubmit hooks
 scripts/nullcone-guard.py     — security guard (stdlib only, zero deps)
 scripts/mcp-server.py         — MCP server (needs: pip install mcp)
 skills/                       — threat-brief, analyze-ioc, triage-alert
