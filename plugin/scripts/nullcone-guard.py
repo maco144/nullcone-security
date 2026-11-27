@@ -498,9 +498,9 @@ def _block(hits: list[dict], context: str, note: str = "") -> None:
 #
 # A skill whose load-time shell line reaches a known IOC is direct evidence the skill
 # is malicious — the first SKILL signal from agents actually RUNNING skills, not from
-# scraping a registry. Shared as a SKILL IOC keyed on the SHA-256 of the skill file,
-# the same identifier clawhub and validate_skill use, so a hit here and a registry
-# scan corroborate each other.
+# scraping a registry. Shared as a hash_sha256 IOC of the skill file, the same row
+# clawhub emits for a scanned skill and validate_skill looks up, so a hit here and a
+# registry scan corroborate each other.
 #
 # What leaves the machine: that hash, and the already-public indicator(s) it reached.
 # Never the skill's name, path, content or the command line (which can hold secrets).
@@ -566,12 +566,15 @@ def _report_skill(data: dict, blocked: list[dict]) -> str:
     try:
         with open(_REPORTED, encoding="utf-8") as f:
             if digest in f.read().split():
-                return f"Already reported to Nullcone as SKILL sha256:{digest[:16]}."
+                return f"Already reported to Nullcone as skill-file sha256:{digest[:16]}."
     except OSError:
         pass
     reached = sorted({f"{h['value']} ({h['ioc_type']}, {h['family']})" for h in blocked})
     body = {
-        "ioc_type": "skill",
+        # hash_sha256, not skill: the API's SKILL type takes provider:name / host/path,
+        # and clawhub files a skill FILE's SHA-256 as a hash IOC. Same type + value means
+        # a runtime report and a registry scan of one file meet on one row.
+        "ioc_type": "hash_sha256",
         "value": digest,
         "severity": max(min(h["severity"] for h in blocked), 5),
         "confidence": 40,
@@ -584,7 +587,7 @@ def _report_skill(data: dict, blocked: list[dict]) -> str:
     req = urllib.request.Request(
         f"{_API_URL}/v1/ioc", data=json.dumps(body).encode(), method="POST",
         headers={"Content-Type": "application/json", "X-Agent-Id": "nullcone-guard",
-                 "User-Agent": "nullcone-guard/0.1.4"},
+                 "User-Agent": "nullcone-guard/0.1.5"},
     )
     try:
         with urllib.request.urlopen(req, timeout=3) as r:
@@ -599,7 +602,7 @@ def _report_skill(data: dict, blocked: list[dict]) -> str:
             f.write(digest + "\n")
     except OSError:
         pass
-    return f"Reported to Nullcone as SKILL sha256:{digest[:16]} (unverified until corroborated)."
+    return f"Reported to Nullcone as skill-file sha256:{digest[:16]} (unverified until corroborated)."
 
 
 # ---------------------------------------------------------------------------

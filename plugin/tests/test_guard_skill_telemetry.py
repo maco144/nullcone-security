@@ -92,7 +92,7 @@ def main():
     else:
         p = posts[0]
         sent = json.dumps(p)
-        if p["ioc_type"] != "skill" or p["value"] != digest:
+        if p["ioc_type"] != "hash_sha256" or p["value"] != digest:
             fails.append(f"value must be the skill file sha256: {p['value']}")
         if p["confidence"] > 40 or "skill-runtime" not in p["tags"] or p["tags"][0] != "skill-runtime":
             fails.append(f"must be low-confidence and tagged skill-runtime first: {p}")
@@ -101,7 +101,7 @@ def main():
                 fails.append(f"payload leaks {leak!r}")
         if HOST not in p["context"]:
             fails.append("context should name the reached indicator")
-        if "Reported to Nullcone as SKILL sha256:" + digest[:16] not in err:
+        if "Reported to Nullcone as skill-file sha256:" + digest[:16] not in err:
             fails.append("block message should confirm the report")
 
     code, err, posts = run({"NULLCONE_TELEMETRY": "1"}, proj, cache=cache)
