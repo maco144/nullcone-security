@@ -29,6 +29,8 @@ Every Claude Code session is now protected:
 | **File writes** | Scans for prompt injection patterns + malicious IOCs | 0ms pattern, ~400ms IOC |
 | **Your prompts** | Detects injection attempts, enriches with threat context | 0ms–400ms |
 
+**Optional: share blocked skills (`export NULLCONE_TELEMETRY=1`, off by default).** When a skill's load-time line reaches a known indicator, the guard submits the skill as a SKILL IOC so other agents see it. It sends only the SHA-256 of the skill file and the already-public indicator it reached, never the skill's name, path, content or command line. Reports land unverified and cannot block anyone until independent feeds corroborate them.
+
 **Clean commands pass instantly.** Only commands containing IPs, domains, URLs, or hashes hit the API. Safe domains (github.com, pypi.org, etc.) are allowlisted.
 
 ## See it work

@@ -18,6 +18,7 @@ Exit codes:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -343,7 +344,7 @@ def _reaching_values(command: str, values, _depth: int = 0) -> set:
 # Hook handlers
 # ---------------------------------------------------------------------------
 
-def handle_bash(tool_input: dict, context: str = "bash command") -> None:
+def handle_bash(tool_input: dict, context: str = "bash command", on_block=None) -> None:
     command = tool_input.get("command", "")
     if not command:
         return
@@ -359,7 +360,7 @@ def handle_bash(tool_input: dict, context: str = "bash command") -> None:
     reaching = _reaching_values(command, {h["value"] for h in hits})
     blocked = [h for h in hits if h["value"] in reaching and h["blockable"]]
     if blocked:
-        _block(blocked, context)
+        _block(blocked, context, on_block(blocked) if on_block else "")
     _warn_unverified([h for h in hits if h["value"] in reaching and not h["blockable"]])
     _warn_mentions([h for h in hits if h["value"] not in reaching])
 
@@ -469,7 +470,7 @@ def _warn_unverified(hits: list[dict]) -> None:
     print("\n".join(lines), file=sys.stderr)
 
 
-def _block(hits: list[dict], context: str) -> None:
+def _block(hits: list[dict], context: str, note: str = "") -> None:
     sev_labels = {10: "CRITICAL", 9: "CRITICAL", 8: "HIGH", 7: "HIGH",
                   6: "MEDIUM", 5: "MEDIUM"}
     lines = [f"NULLCONE BLOCK: Known-malicious indicator(s) in {context}:"]
@@ -485,8 +486,120 @@ def _block(hits: list[dict], context: str) -> None:
         "\nBLOCKED by Nullcone (https://nullcone.ai). "
         "If this is intentional (security research), re-run with explicit approval."
     )
+    if note:
+        lines.append(note)
     print("\n".join(lines), file=sys.stderr)
     sys.exit(2)
+
+
+# ---------------------------------------------------------------------------
+# Skill-block telemetry (0.1.4) — OPT-IN, off unless NULLCONE_TELEMETRY=1
+# ---------------------------------------------------------------------------
+#
+# A skill whose load-time shell line reaches a known IOC is direct evidence the skill
+# is malicious — the first SKILL signal from agents actually RUNNING skills, not from
+# scraping a registry. Shared as a SKILL IOC keyed on the SHA-256 of the skill file,
+# the same identifier clawhub and validate_skill use, so a hit here and a registry
+# scan corroborate each other.
+#
+# What leaves the machine: that hash, and the already-public indicator(s) it reached.
+# Never the skill's name, path, content or the command line (which can hold secrets).
+# The server scores these rows "unverified", and validate_skill never blocks on an
+# unverified row — one report is a lead, not a verdict.
+
+_TELEMETRY = os.getenv("NULLCONE_TELEMETRY", "").strip().lower() in ("1", "true", "yes", "on")
+_REPORTED = os.path.join(os.path.expanduser(os.getenv("XDG_CACHE_HOME", "~/.cache")),
+                         "nullcone", "reported-skills")
+
+
+def _skill_file(data: dict) -> Optional[str]:
+    """The skill/command file whose load-time line this is, or None if not provable.
+
+    The hook payload carries the name, not the path. Candidates come from the
+    standard locations; one is accepted only if it CONTAINS the blocked command,
+    which also picks the right version out of several plugin cache copies.
+    """
+    import glob
+    name = str(data.get("command_name") or "")
+    command = (data.get("tool_input") or {}).get("command", "")
+    if not name or not command or "/" in name or ".." in name:
+        return None
+    project = os.getenv("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
+    home = os.path.expanduser("~/.claude")
+    leaf = name.split(":")[-1]
+    plugin = name.split(":")[0] if ":" in name else "*"
+    pats = []
+    for root in (os.path.join(project, ".claude"), home):
+        pats += [os.path.join(root, "skills", leaf, "SKILL.md"), os.path.join(root, "commands", leaf + ".md")]
+    pats += [os.path.join(home, "plugins", "cache", "*", plugin, "*", "skills", leaf, "SKILL.md"),
+             os.path.join(home, "plugins", "cache", "*", plugin, "*", "commands", leaf + ".md")]
+    for pat in pats:
+        for path in sorted(glob.glob(pat)):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    if command in f.read():
+                        return path
+            except OSError:
+                continue
+    return None
+
+
+def _safe_report(data: dict, blocked: list[dict]) -> str:
+    # Telemetry must never turn a block into a guard error (which also blocks, but
+    # with a worse message) — or ever stop the block from happening.
+    try:
+        return _report_skill(data, blocked)
+    except Exception:
+        return ""
+
+
+def _report_skill(data: dict, blocked: list[dict]) -> str:
+    """Submit the skill as a SKILL IOC if opted in. Returns a line for the block message."""
+    if not _TELEMETRY:
+        return ("Share this skill with the Nullcone network (sends only its SHA-256 and the "
+                "indicator above): export NULLCONE_TELEMETRY=1")
+    path = _skill_file(data)
+    if not path:
+        return ""
+    with open(path, encoding="utf-8") as f:
+        digest = hashlib.sha256(f.read().encode()).hexdigest()
+    try:
+        with open(_REPORTED, encoding="utf-8") as f:
+            if digest in f.read().split():
+                return f"Already reported to Nullcone as SKILL sha256:{digest[:16]}."
+    except OSError:
+        pass
+    reached = sorted({f"{h['value']} ({h['ioc_type']}, {h['family']})" for h in blocked})
+    body = {
+        "ioc_type": "skill",
+        "value": digest,
+        "severity": max(min(h["severity"] for h in blocked), 5),
+        "confidence": 40,
+        "family_hint": next((h["family"] for h in blocked if h["family"] not in ("", "unknown", "Malicious")), None),
+        "context": ("Skill load-time shell line reached known-malicious indicator(s): "
+                    + "; ".join(reached)[:3800] + ". Reported at runtime by the Nullcone guard."),
+        "tags": ["skill-runtime", "supply-chain"] + sorted({f"reached-{h['ioc_type']}" for h in blocked}),
+        "source": "nullcone-guard",
+    }
+    req = urllib.request.Request(
+        f"{_API_URL}/v1/ioc", data=json.dumps(body).encode(), method="POST",
+        headers={"Content-Type": "application/json", "X-Agent-Id": "nullcone-guard",
+                 "User-Agent": "nullcone-guard/0.1.4"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            ok = 200 <= r.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        ok = False
+    if not ok:
+        return ""
+    try:
+        os.makedirs(os.path.dirname(_REPORTED), exist_ok=True)
+        with open(_REPORTED, "a", encoding="utf-8") as f:
+            f.write(digest + "\n")
+    except OSError:
+        pass
+    return f"Reported to Nullcone as SKILL sha256:{digest[:16]} (unverified until corroborated)."
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +630,8 @@ def main():
             # a skill could `curl` a live IOC at load with no check at all.
             if tool_name in ("Bash", ""):
                 name = data.get("command_name") or "unknown"
-                handle_bash(tool_input, f"skill load-time shell line (skill: {name})")
+                handle_bash(tool_input, f"skill load-time shell line (skill: {name})",
+                            on_block=lambda blocked: _safe_report(data, blocked))
         elif event == "UserPromptSubmit":
             handle_prompt_submit(data)
     except Exception as e:
